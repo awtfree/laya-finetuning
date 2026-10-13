@@ -387,6 +387,15 @@ rare labels more weight than the full file does. The build scripts (`build_savic
 no passing audit for the file as it is now, print a warning on stderr, and accept `--allow-unaudited` to
 override. Human decisions and rationale-derived labels are not model-made and are not gated.
 
+Claude's own drafts are model-made too. In `data/savic-review/confirmations.json` (the confirm.html export), an
+entry whose `note` starts with `[claude-draft]` is Claude's answer, entered for Andrew. It is never human gold or
+part of the test set, and it never overrides a recorded decision. With `--split`, a draft's answers to the split
+questions become training labels for train cases (yes/no, `partly` = 0.5). A draft decision is used only on rule
+approvals, which have no decision label of their own. The build writes these labels to
+`data/savic-review-v2/claude_draft_labels.jsonl` and uses each question's labels only once that file passes an
+audit under the source `claude-drafts`. Entries without the prefix stay human gold. On stderr the build prints
+how many entries of each kind it found. `python -I scripts/test_claude_drafts.py` tests this handling.
+
 ## Weights
 
 - `./models/convaiinnovations__laya/` holds 2.3 GB for all three checkpoints plus the model card and assets. It is mounted **read-only** into the API container, and nothing is downloaded at runtime (`HF_HUB_OFFLINE=1`).

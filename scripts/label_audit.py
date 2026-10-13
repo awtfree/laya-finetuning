@@ -47,7 +47,9 @@ QUESTION_TEXT = {
                 "that an ERP or modernization pitch could use (not product marketing, legal boilerplate, "
                 "careers or biography).",
     "current": "Nothing in the text suggests it is stale (for example from a filing many years old).",
-    "worth_reading": "The passage could say something about the company's operations, systems, costs, delays, "
+    "decision": "Approve the claim: the excerpt supports the statement exactly as worded and it is relevant to "
+                "an ERP or modernization pitch (true = approve, false = reject).",
+    "worth_reading":"The passage could say something about the company's operations, systems, costs, delays, "
                      "risks, growth, customers, suppliers, leadership or plans (false only for navigation, "
                      "cookie or legal boilerplate, contract text, price lists, store locators or link lists).",
 }

@@ -21,6 +21,19 @@ Teacher labels are model-made: a question's teacher labels are used only if
 teacher.jsonl, as it is now, has a passing audit for that question
 (scripts/label_audit.py). --allow-unaudited uses them anyway, with a warning.
 
+data/savic-review/confirmations.json (exported from confirm.html) holds two kinds
+of entry, counted on stderr:
+  human gold      note without the "[claude-draft]" prefix: overrides the recorded
+                  decision and makes the case Andrew's (it may enter test).
+  claude drafts   note starting "[claude-draft]": Claude's answers, entered for
+                  Andrew. Never human gold, never in test, never override a
+                  recorded decision. With --split they are training labels for
+                  train cases only: split answers (yes/no, "partly" = 0.5) replace
+                  the teacher's, a draft decision is used only on rule rows, and
+                  rationale-derived hard labels still win. They are written to
+                  data/savic-review-v2/claude_draft_labels.jsonl and used per
+                  question only with a passing "claude-drafts" audit of that file.
+
 Usage: python -I scripts/build_savic_review.py <path to savic-prospect-intelligence> [--split [--allow-unaudited]]
 """
 import glob
@@ -114,6 +127,32 @@ def rationale_labels(text, decision):
         if "(kv4 pre-sort): current:" in t or "(kv4 pre-sort): recent," in t:
             out["current"] = True
     return out
+
+
+DRAFT_PREFIX = "[claude-draft]"
+
+
+def partition_confirmations(claims):
+    """confirmations.json "claims" -> (human gold, Claude drafts).
+
+    Human gold: entries with a decision whose note does not start with
+    "[claude-draft]" (unchanged behaviour). Drafts: every entry whose note does.
+    """
+    human, drafts = {}, {}
+    for k, v in claims.items():
+        if str(v.get("note") or "").lstrip().startswith(DRAFT_PREFIX):
+            drafts[k] = v
+        elif v.get("decision"):
+            human[k] = v
+    return human, drafts
+
+
+def draft_value(question, answer):
+    """A confirm.html answer -> a training label (None if unanswered or unknown)."""
+    a = str(answer or "").strip().lower()
+    if question == "decision":
+        return a if a in ("approve", "reject") else None
+    return {"yes": True, "no": False, "partly": 0.5}.get(a)
 
 
 def ro(path):
@@ -212,12 +251,18 @@ def main():
         rationale[oid] = why or ""
 
     # Answers Andrew gave on confirm.html override the recorded decision and
-    # make the case human gold, whoever decided it first.
-    confirmed = {}
+    # make the case human gold, whoever decided it first. Entries whose note
+    # starts with "[claude-draft]" are Claude's drafts, entered for him: they are
+    # not human gold, never override anything and never reach the test set
+    # (see write_split: training labels only, gated by the label audit).
+    confirmed, drafts = {}, {}
     conf_path = os.path.join(OUT, "confirmations.json")
     if os.path.exists(conf_path):
         with open(conf_path, encoding="utf-8") as f:
-            confirmed = {k: v for k, v in json.load(f).get("claims", {}).items() if v.get("decision")}
+            confirmed, drafts = partition_confirmations(json.load(f).get("claims", {}))
+        print("confirmations.json: {} human-gold entries (override the recorded decision), "
+              "{} [claude-draft] entries (training labels only, audit-gated, --split only)".format(
+                  len(confirmed), len(drafts)), file=sys.stderr)
 
     train, test, skipped = [], [], {"no_statement": 0, "no_excerpt": 0, "request_changes": 0}
     stats = {"linked": 0, "matched": 0}
@@ -249,6 +294,8 @@ def main():
             "decision": decision, "reviewer": reviewer, "rationale": rationale.get(oid, ""),
             "confirmed": confirmed.get(oid),
         })
+        if oid in drafts:
+            everything[-1]["claude_draft"] = drafts[oid]
         if decision not in ("approve", "reject"):
             skipped["request_changes"] += 1
             continue
@@ -262,7 +309,8 @@ def main():
         stats["matched" if matched else "linked"] += 1
         case = {"id": oid, "state": {"statement": stmt, "excerpt": excerpt},
                 "gold": {"decision": decision}, "_reviewer": reviewer, "_human": human,
-                "_rationale": rationale.get(oid, "") if decision == recorded else ""}
+                "_rationale": rationale.get(oid, "") if decision == recorded else "",
+                "_draft": drafts.get(oid)}
         # Hold out roughly a third of Andrew's own decisions as the test set.
         if human and int(hashlib.sha1(oid.encode()).hexdigest(), 16) % 3 == 0:
             test.append(case)
@@ -326,9 +374,39 @@ def write_split(train, test):
     audited = {k: os.path.exists(teacher_path) and require_audit("teacher", teacher_path, k, ALLOW_UNAUDITED)
                for k in SPLIT_KEYS}
     teacher = load_teacher()
+
+    # Claude's [claude-draft] answers: train cases only. The labels that could be
+    # used go to claude_draft_labels.jsonl, which is what the audit hashes, so
+    # Andrew adding human answers to confirmations.json does not void the audit.
+    # A draft decision is usable only where the case has no decision label
+    # (rule approvals); a recorded decision always stands.
+    draft_rows = []
+    for c in train:
+        d = c.get("_draft")
+        if not d:
+            continue
+        rule = c["_reviewer"].startswith("Rule:")
+        for k in (("decision",) if rule else ()) + SPLIT_KEYS:
+            v = draft_value(k, d.get(k))
+            if v is not None:
+                draft_rows.append({"id": c["id"], "question": k, "label": d.get(k).strip().lower(),
+                                   "statement": c["state"]["statement"], "excerpt": c["state"]["excerpt"],
+                                   "decision": c["gold"]["decision"], "reviewer": c["_reviewer"]})
+    draft_audited = {}
+    draft_path = os.path.join(OUT_SPLIT, "claude_draft_labels.jsonl")
+    if draft_rows:
+        os.makedirs(OUT_SPLIT, exist_ok=True)
+        with open(draft_path, "w", encoding="utf-8") as f:
+            for r in draft_rows:
+                f.write(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n")
+        draft_audited = {k: require_audit("claude-drafts", draft_path, k, ALLOW_UNAUDITED)
+                         for k in sorted({r["question"] for r in draft_rows})}
+
     rows = {"train": [], "test": []}
     tally = {"train": {}, "test": {}}
-    notes = {"rule_rows": 0, "no_teacher": 0, "rationale_overrides": 0}
+    notes = {"rule_rows": 0, "no_teacher": 0, "rationale_overrides": 0,
+             "draft_labels_used": 0, "draft_labels_unaudited": 0, "draft_over_teacher": 0,
+             "draft_decisions_used": 0, "draft_decisions_ignored_recorded": 0, "drafts_on_test_ignored": 0}
 
     def bump(split, key, value):
         d = tally[split].setdefault(key, {})
@@ -352,7 +430,24 @@ def write_split(train, test):
                     gold[k] = None if p is None else round(float(p), 3)
                 if rule:
                     notes["rule_rows"] += 1
+                d = c.get("_draft") or {}
+                for k in ("decision",) + SPLIT_KEYS:
+                    v = draft_value(k, d.get(k))
+                    if v is None:
+                        continue
+                    if k == "decision" and gold["decision"] is not None:
+                        notes["draft_decisions_ignored_recorded"] += 1  # never override a recorded decision
+                        continue
+                    if not draft_audited.get(k):
+                        notes["draft_labels_unaudited"] += 1
+                        continue
+                    if k != "decision" and gold.get(k) is not None:
+                        notes["draft_over_teacher"] += 1
+                    gold[k] = v
+                    notes["draft_decisions_used" if k == "decision" else "draft_labels_used"] += 1
             else:
+                if c.get("_draft"):
+                    notes["drafts_on_test_ignored"] += 1
                 for k in SPLIT_KEYS:
                     gold[k] = None
             for k, v in hard.items():
@@ -384,6 +479,13 @@ def write_split(train, test):
         "rule approvals in train (no decision label, weak 'supported' vote): {}".format(notes["rule_rows"]),
         "train cases without teacher labels: {}".format(notes["no_teacher"]),
         "teacher labels replaced by a rationale-derived hard label: {}".format(notes["rationale_overrides"]),
+        "[claude-draft] labels (train only; passing audit{}): {}; used {} split labels ({} replacing a "
+        "teacher label) and {} decisions on rule rows; left out {} unaudited; ignored {} draft decisions "
+        "where a decision is recorded and the drafts on {} test cases".format(
+            " or --allow-unaudited" if ALLOW_UNAUDITED else "", json.dumps(draft_audited, sort_keys=True),
+            notes["draft_labels_used"], notes["draft_over_teacher"], notes["draft_decisions_used"],
+            notes["draft_labels_unaudited"], notes["draft_decisions_ignored_recorded"],
+            notes["drafts_on_test_ignored"]),
         "train labels per question: {}".format(json.dumps(tally["train"], indent=1, sort_keys=True)),
         "test labels per question (human decisions and rationales only): {}".format(
             json.dumps(tally["test"], indent=1, sort_keys=True)),
