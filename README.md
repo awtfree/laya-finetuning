@@ -364,6 +364,29 @@ tested. With ~1,000, a plain fine-tune of its own encoder (ModernBERT-large + pe
 reproduces every number (the dataset is fetched at a pinned revision, not stored in the repo). The published
 example model is `td-full`; check it with `python3 scripts/smoke_test.py --stack stack.finetuned.json`.
 
+### Auditing model-made labels
+
+Labels a local model wrote (the Ollama teacher in `data/savic-review/teacher.jsonl`, the KV4 screens in
+`data/kv4-screens/labels.jsonl`) are trained on only after Claude has checked a sample of them.
+`scripts/label_audit.py` ties each audit to the label file's sha256. Any change to the file (a relabel, new
+prospects) therefore needs a new audit before those labels are used again.
+
+```bash
+# 1. Draw a random sample, stratified by question, label value and agreement with the recorded decision
+python -I scripts/label_audit.py sample --labels data/savic-review/teacher.jsonl --source teacher --n 30 --seed 7
+# 2. The judge reads data/audits/<source>-<sha8>-blind.jsonl (no model labels in it) and writes
+#    data/audits/<source>-<sha8>-answers.jsonl: {"key": ..., "label": true|false, "reason": "one line"}
+# 3. Score it: agreement and Wilson 95% lower bound per question, appended to data/audits/registry.json
+python -I scripts/label_audit.py score --source teacher --show-errors   # --min-agreement 0.85 --min-wilson-lb 0.70
+```
+
+A question passes when agreement is at least 0.85 and the Wilson lower bound is at least 0.70. With 30 rows,
+that takes 26 agreements (0.867, lower bound 0.703). The sample is balanced across strata rather than proportional, so it gives
+rare labels more weight than the full file does. The build scripts (`build_savic_review.py --split`,
+`build_kv4_screens.py`) call `require_audit(source, path, question)`. They leave out any model-made labels with
+no passing audit for the file as it is now, print a warning on stderr, and accept `--allow-unaudited` to
+override. Human decisions and rationale-derived labels are not model-made and are not gated.
+
 ## Weights
 
 - `./models/convaiinnovations__laya/` holds 2.3 GB for all three checkpoints plus the model card and assets. It is mounted **read-only** into the API container, and nothing is downloaded at runtime (`HF_HUB_OFFLINE=1`).
