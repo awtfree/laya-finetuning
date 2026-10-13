@@ -98,8 +98,8 @@ SPLIT_QUESTIONS = {
         "type": "noul",
         "instructions": "Is the statement current?",
         "criteria": {
-            "true": "nothing in the text suggests it is stale",
-            "false": "it comes from an old filing or describes a situation many years past",
+            "true": "still true today, or a dated milestone in the company's ownership, acquisition, divestiture or legal-entity history (these shape the ERP landscape at any age)",
+            "false": "a past or superseded one-off: a launch, campaign, sponsorship, job posting, plan, forecast, expected synergy, deal rumour, or risk boilerplate from an old filing",
         },
     },
 }

@@ -29,7 +29,7 @@ Answer each with true or false:
 - supported: the excerpt states or directly implies every part of the statement as worded
 - about_prospect: the statement is about the prospect company itself, not another company, vendor or customer
 - relevant: it says something about the prospect's operations, systems, finances, growth, risks or change that an ERP or modernization pitch could use (not product marketing, legal boilerplate, careers or biography)
-- current: nothing in the text suggests it is stale (for example from a filing many years old)
+- current: true if still true today, or a dated milestone in the company's ownership, acquisition, divestiture or legal-entity history (these shape the ERP landscape at any age); false if a past or superseded one-off: a launch, campaign, sponsorship, job posting, plan, forecast, expected synergy, deal rumour, or risk boilerplate from an old filing. Age alone never makes it false
 
 Return {{"supported": bool, "about_prospect": bool, "relevant": bool, "current": bool}}"""
 KEYS = ("supported", "about_prospect", "relevant", "current")

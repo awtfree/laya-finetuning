@@ -46,7 +46,7 @@ QUESTION_TEXT = {
     "relevant": "It says something about the prospect's operations, systems, finances, growth, risks or change "
                 "that an ERP or modernization pitch could use (not product marketing, legal boilerplate, "
                 "careers or biography).",
-    "current": "Nothing in the text suggests it is stale (for example from a filing many years old).",
+    "current": "True if still true today, or a dated milestone in the company's ownership, acquisition, divestiture or legal-entity history (these shape the ERP landscape at any age). False if a past or superseded one-off: a launch, campaign, sponsorship, job posting, plan, forecast, expected synergy, deal rumour, or risk boilerplate from an old filing. Age alone never makes it false.",
     "decision": "Approve the claim: the excerpt supports the statement exactly as worded and it is relevant to "
                 "an ERP or modernization pitch (true = approve, false = reject).",
     "worth_reading":"The passage could say something about the company's operations, systems, costs, delays, "
