@@ -49,7 +49,14 @@ ALLOW_UNAUDITED = "--allow-unaudited" in sys.argv[1:]
 APP = os.path.abspath(_ARGS[0] if _ARGS else r"C:\Users\andre\dev\savic-prospect-intelligence")
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 OUT = os.path.join(DATA, "savic-review")
-OUT_SPLIT = os.path.join(DATA, "savic-review-v2")
+# --teacher-jev (with --split): Jev's labels (teacher.jev.jsonl, audit source
+# "teacher-jev") replace Ollama's, and only Jev's sure answers are kept: a p_true
+# inside JEV_UNSURE is left unlabelled and listed for Andrew instead
+# (scripts/build_confirm_page.py --jev-unsure N). Output goes to savic-review-v2-jev/.
+TEACHER_JEV = "--teacher-jev" in sys.argv[1:]
+JEV_UNSURE = (0.3, 0.7)
+OUT_SPLIT = os.path.join(DATA, "savic-review-v2-jev" if TEACHER_JEV else "savic-review-v2")
+TEACHER_FILE, TEACHER_SOURCE = ("teacher.jev.jsonl", "teacher-jev") if TEACHER_JEV else ("teacher.jsonl", "teacher")
 WINDOW = 700  # characters of source text kept around the quote
 SPLIT_KEYS = ("supported", "about_prospect", "relevant", "current")
 
@@ -355,7 +362,7 @@ def main():
 
 
 def load_teacher():
-    path = os.path.join(OUT, "teacher.jsonl")
+    path = os.path.join(OUT, TEACHER_FILE)
     out = {}
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
@@ -370,8 +377,8 @@ def write_split(train, test):
     """data/savic-review-v2/: decision + 4 split questions (see the module docstring)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from label_audit import require_audit
-    teacher_path = os.path.join(OUT, "teacher.jsonl")
-    audited = {k: os.path.exists(teacher_path) and require_audit("teacher", teacher_path, k, ALLOW_UNAUDITED)
+    teacher_path = os.path.join(OUT, TEACHER_FILE)
+    audited = {k: os.path.exists(teacher_path) and require_audit(TEACHER_SOURCE, teacher_path, k, ALLOW_UNAUDITED)
                for k in SPLIT_KEYS}
     teacher = load_teacher()
 
@@ -404,7 +411,7 @@ def write_split(train, test):
 
     rows = {"train": [], "test": []}
     tally = {"train": {}, "test": {}}
-    notes = {"rule_rows": 0, "no_teacher": 0, "rationale_overrides": 0,
+    notes = {"rule_rows": 0, "no_teacher": 0, "rationale_overrides": 0, "jev_unsure_left_out": 0,
              "draft_labels_used": 0, "draft_labels_unaudited": 0, "draft_over_teacher": 0,
              "draft_decisions_used": 0, "draft_decisions_ignored_recorded": 0, "drafts_on_test_ignored": 0}
 
@@ -424,6 +431,9 @@ def write_split(train, test):
                 p_true, n = (t or {}).get("p_true", {}), (t or {}).get("samples", 0)
                 for k in SPLIT_KEYS:
                     p = p_true.get(k) if audited[k] else None
+                    if TEACHER_JEV and p is not None and JEV_UNSURE[0] < p < JEV_UNSURE[1]:
+                        notes["jev_unsure_left_out"] += 1
+                        p = None
                     if k == "supported" and rule:
                         # A verified-source rule approval: one weak "yes" vote beside the teacher's.
                         p = (n * p + 1.0) / (n + 1) if p is not None else 0.75
@@ -478,6 +488,8 @@ def write_split(train, test):
             " or --allow-unaudited" if ALLOW_UNAUDITED else "", json.dumps(audited, sort_keys=True)),
         "rule approvals in train (no decision label, weak 'supported' vote): {}".format(notes["rule_rows"]),
         "train cases without teacher labels: {}".format(notes["no_teacher"]),
+        "teacher: {}{}".format(TEACHER_FILE, ", unsure Jev answers left out: {}".format(
+            notes["jev_unsure_left_out"]) if TEACHER_JEV else ""),
         "teacher labels replaced by a rationale-derived hard label: {}".format(notes["rationale_overrides"]),
         "[claude-draft] labels (train only; passing audit{}): {}; used {} split labels ({} replacing a "
         "teacher label) and {} decisions on rule rows; left out {} unaudited; ignored {} draft decisions "
